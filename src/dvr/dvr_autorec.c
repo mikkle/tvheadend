@@ -105,7 +105,8 @@ autorec_cmp(dvr_autorec_entry_t *dae, event_t *e)
     localtime_r(&e->e_start, &ev_time);
     a_time.tm_min = dae->dae_approx_time % 60;
     a_time.tm_hour = dae->dae_approx_time / 60;
-    if(abs(mktime(&a_time) - mktime(&ev_time)) > 900)
+    // if(abs(mktime(&a_time) - mktime(&ev_time)) > 900) //mikkle: 900 = 15 minutes
+    if(abs(mktime(&a_time) - mktime(&ev_time)) > 3600) //mikkle: 3600 = 1 hour
       return 0;
   }
 

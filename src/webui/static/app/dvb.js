@@ -1105,8 +1105,8 @@ tvheadend.dvb_adapter_general = function(adapterData, satConfStore) {
 
     var confreader = new Ext.data.JsonReader({
 	root: 'dvbadapters'
-    }, ['name', 'automux', 'idlescan', 'diseqcversion', 'qmon',
-	'dumpmux', 'nitoid','extrapriority']);
+    }, ['name', 'automux', 'skip_initialscan', 'idlescan', 'diseqcversion', 'qmon',
+	'dumpmux', 'poweroff', 'nitoid','extrapriority']);
 
     
     function saveConfForm () {
@@ -1127,6 +1127,10 @@ tvheadend.dvb_adapter_general = function(adapterData, satConfStore) {
 	    fieldLabel: 'Autodetect muxes',
 	    name: 'automux'
 	}),
+  new Ext.form.Checkbox({
+      fieldLabel: 'Skip initial scan',
+      name: 'skip_initialscan'
+  }),
 	new Ext.form.Checkbox({
 	    fieldLabel: 'Idle scanning',
 	    name: 'idlescan'
@@ -1145,6 +1149,10 @@ tvheadend.dvb_adapter_general = function(adapterData, satConfStore) {
 					 'option enabled can consume a lot ' +
 					 'of diskspace. You have been warned');
 	    }
+	}),
+	new Ext.form.Checkbox({
+	    fieldLabel: 'Turn off adapter when idle',
+	    name: 'poweroff'
 	}),
 	{
 	    fieldLabel: 'NIT-o Network ID',

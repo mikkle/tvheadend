@@ -291,7 +291,9 @@ servicecmp(const void *A, const void *B)
    * additional, it may be problematic, since a higher priority value lowers the ranking
    *
    */
-  if (dvb_extra_prio(a->s_dvb_mux_instance->tdmi_adapter) == dvb_extra_prio(b->s_dvb_mux_instance->tdmi_adapter)) {
+  int prio_a = service_get_prio(a);
+  int prio_b = service_get_prio(b);
+  if (prio_a == prio_b) {
 
     int q = service_get_quality(a) - service_get_quality(b);
 
@@ -299,7 +301,7 @@ servicecmp(const void *A, const void *B)
       return q; /* Quality precedes priority */
   }
 
-  return service_get_prio(a) - service_get_prio(b);
+  return prio_a - prio_b;
 }
 
 
@@ -337,7 +339,7 @@ service_find(channel_t *ch, unsigned int weight, const char *loginfo,
     if(t->s_quality_index(t) < 10) {
       if(loginfo != NULL) {
 	tvhlog(LOG_NOTICE, "Service", 
-	       "%s: Skipping \"%s\" -- Quality below 10%",
+	       "%s: Skipping \"%s\" -- Quality below 10%%",
 	       loginfo, service_nicename(t));
 	err = SM_CODE_BAD_SIGNAL;
       }
@@ -346,7 +348,7 @@ service_find(channel_t *ch, unsigned int weight, const char *loginfo,
     vec[cnt++] = t;
     tvhlog(LOG_DEBUG, "Service",
     		"%s: Adding adapter \"%s\" for service \"%s\"",
-    		 loginfo, t->s_dvb_mux_instance->tdmi_identifier, service_nicename(t));
+    		 loginfo, service_adapter_nicename(t), service_nicename(t));
   }
 
   /* Sort services, lower priority should come come earlier in the vector
@@ -371,7 +373,7 @@ service_find(channel_t *ch, unsigned int weight, const char *loginfo,
   for(i = off; i < cnt; i++) {
     t = vec[i];
     tvhlog(LOG_DEBUG, "Service", "%s: Probing adapter \"%s\" without stealing for service \"%s\"",
-	     loginfo, t->s_dvb_mux_instance->tdmi_identifier, service_nicename(t));
+	     loginfo, service_adapter_nicename(t), service_nicename(t));
 
     if(t->s_status == SERVICE_RUNNING) 
       return t;
@@ -388,7 +390,7 @@ service_find(channel_t *ch, unsigned int weight, const char *loginfo,
   for(i = off; i < cnt; i++) {
     t = vec[i];
     tvhlog(LOG_DEBUG, "Service", "%s: Probing adapter \"%s\" with weight %d for service \"%s\"",
-	     loginfo, t->s_dvb_mux_instance->tdmi_identifier, weight, service_nicename(t));
+	     loginfo, service_adapter_nicename(t), weight, service_nicename(t));
 
     if((r = service_start(t, weight, 0)) == 0)
       return t;
@@ -1030,6 +1032,30 @@ service_component_nicename(elementary_stream_t *st)
 }
 
 const char *
+service_adapter_nicename(service_t *t)
+{
+  switch(t->s_type) {
+  case SERVICE_TYPE_DVB:
+    if(t->s_dvb_mux_instance)
+      return t->s_dvb_mux_instance->tdmi_identifier;
+    else
+      return "Unknown adapter";
+
+  case SERVICE_TYPE_IPTV:
+    return t->s_iptv_iface;
+
+  case SERVICE_TYPE_V4L:
+    if(t->s_v4l_adapter)
+      return t->s_v4l_adapter->va_displayname;
+    else
+      return "Unknown adapter";
+
+  default:
+    return "Unknown adapter";
+  }
+}
+
+const char *
 service_tss2text(int flags)
 {
   if(flags & TSS_NO_ACCESS)
@@ -1109,4 +1135,38 @@ service_get_encryption(service_t *t)
     }
   }
   return 0;
+}
+
+/*
+ * Find the primary EPG service (to stop EPG trying to update
+ * from multiple OTA sources)
+ */
+int
+service_is_primary_epg(service_t *svc)
+{
+  service_t *ret = NULL, *t;
+  if (!svc || !svc->s_ch) return 0;
+  LIST_FOREACH(t, &svc->s_ch->ch_services, s_ch_link) {
+    if (!t->s_enabled || !t->s_dvb_eit_enable) continue;
+    if (!ret || dvb_extra_prio(t->s_dvb_mux_instance->tdmi_adapter) > dvb_extra_prio(ret->s_dvb_mux_instance->tdmi_adapter))
+      ret = t;
+  }
+  return !ret ? 0 : (ret->s_dvb_service_id == svc->s_dvb_service_id);
+}
+
+/*
+ * list of known service types
+ */
+htsmsg_t *servicetype_list ( void )
+{
+  htsmsg_t *ret, *e;
+  int i;
+  ret = htsmsg_create_list();
+  for (i = 0; i < sizeof(stypetab) / sizeof(stypetab[0]); i++ ) {
+    e = htsmsg_create_map();
+    htsmsg_add_u32(e, "val", stypetab[i].val);
+    htsmsg_add_str(e, "str", stypetab[i].str);
+    htsmsg_add_msg(ret, NULL, e);
+  }
+  return ret;
 }

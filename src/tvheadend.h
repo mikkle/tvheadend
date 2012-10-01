@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/time.h>
+#include <libgen.h>
 
 #include "queue.h"
 #include "avg.h"
@@ -34,7 +35,7 @@
 #include "redblack.h"
 
 extern const char *tvheadend_version;
-extern const char *tvheadend_dataroot();
+extern char *tvheadend_cwd;
 
 #define PTS_UNSET INT64_C(0x8000000000000000)
 
@@ -104,8 +105,6 @@ LIST_HEAD(th_subscription_list, th_subscription);
 RB_HEAD(channel_tree, channel);
 TAILQ_HEAD(channel_queue, channel);
 LIST_HEAD(channel_list, channel);
-LIST_HEAD(event_list, event);
-RB_HEAD(event_tree, event);
 LIST_HEAD(dvr_config_list, dvr_config);
 LIST_HEAD(dvr_entry_list, dvr_entry);
 TAILQ_HEAD(ref_update_queue, ref_update);
@@ -170,7 +169,9 @@ typedef enum {
 
 #define SCT_ISVIDEO(t) ((t) == SCT_MPEG2VIDEO || (t) == SCT_H264)
 #define SCT_ISAUDIO(t) ((t) == SCT_MPEG2AUDIO || (t) == SCT_AC3 || \
-                        (t) == SCT_AAC || (t) == SCT_MP4A)
+                        (t) == SCT_AAC || (t) == SCT_MP4A ||	   \
+			(t) == SCT_EAC3)
+#define SCT_ISSUBTITLE(t) ((t) == SCT_TEXTSUB || (t) == SCT_DVBSUB)
 
 /**
  * The signal status of a tuner
@@ -358,9 +359,11 @@ static inline unsigned int tvh_strhash(const char *s, unsigned int mod)
 void tvh_str_set(char **strp, const char *src);
 int tvh_str_update(char **strp, const char *src);
 
-void tvhlog(int severity, const char *subsys, const char *fmt, ...);
+void tvhlog(int severity, const char *subsys, const char *fmt, ...)
+  __attribute__((format(printf,3,4)));
 
-void tvhlog_spawn(int severity, const char *subsys, const char *fmt, ...);
+void tvhlog_spawn(int severity, const char *subsys, const char *fmt, ...)
+  __attribute__((format(printf,3,4)));
 
 #define	LOG_EMERG	0	/* system is unusable */
 #define	LOG_ALERT	1	/* action must be taken immediately */
@@ -419,7 +422,7 @@ int tvh_socket(int domain, int type, int protocol);
 
 void hexdump(const char *pfx, const uint8_t *data, int len);
 
-uint32_t crc32(uint8_t *data, size_t datalen, uint32_t crc);
+uint32_t tvh_crc32(uint8_t *data, size_t datalen, uint32_t crc);
 
 int base64_decode(uint8_t *out, const char *in, int out_size);
 
@@ -450,5 +453,14 @@ void sbuf_put_be32(sbuf_t *sb, uint32_t u32);
 void sbuf_put_be16(sbuf_t *sb, uint16_t u16);
 
 void sbuf_put_byte(sbuf_t *sb, uint8_t u8);
+
+char *md5sum ( const char *str );
+
+/* printing */
+#if __SIZEOF_LONG__ == 8
+  #define PRItime_t PRId64
+#else
+  #define PRItime_t "l" PRId32
+#endif
 
 #endif /* TV_HEAD_H */

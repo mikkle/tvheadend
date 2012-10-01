@@ -148,9 +148,11 @@ extjs_dvbadapter(http_connection_t *hc, const char *remain, void *opaque)
     htsmsg_add_str(r, "device", tda->tda_rootpath ?: "No hardware attached");
     htsmsg_add_str(r, "name", tda->tda_displayname);
     htsmsg_add_u32(r, "automux", tda->tda_autodiscovery);
+    htsmsg_add_u32(r, "skip_initialscan", tda->tda_skip_initialscan);
     htsmsg_add_u32(r, "idlescan", tda->tda_idlescan);
     htsmsg_add_u32(r, "qmon", tda->tda_qmon);
     htsmsg_add_u32(r, "dumpmux", tda->tda_dump_muxes);
+    htsmsg_add_u32(r, "poweroff", tda->tda_poweroff);
     htsmsg_add_u32(r, "nitoid", tda->tda_nitoid);
     htsmsg_add_str(r, "diseqcversion", 
 		   ((const char *[]){"DiSEqC 1.0 / 2.0",
@@ -167,11 +169,17 @@ extjs_dvbadapter(http_connection_t *hc, const char *remain, void *opaque)
     s = http_arg_get(&hc->hc_req_args, "automux");
     dvb_adapter_set_auto_discovery(tda, !!s);
 
+    s = http_arg_get(&hc->hc_req_args, "skip_initialscan");
+    dvb_adapter_set_skip_initialscan(tda, !!s);
+
     s = http_arg_get(&hc->hc_req_args, "idlescan");
     dvb_adapter_set_idlescan(tda, !!s);
 
     s = http_arg_get(&hc->hc_req_args, "qmon");
     dvb_adapter_set_qmon(tda, !!s);
+
+    s = http_arg_get(&hc->hc_req_args, "poweroff");
+    dvb_adapter_set_poweroff(tda, !!s);
 
     s = http_arg_get(&hc->hc_req_args, "dumpmux");
     dvb_adapter_set_dump_muxes(tda, !!s);

@@ -39,6 +39,8 @@
 #include "diseqc.h"
 #include "notify.h"
 #include "dvr/dvr.h"
+#include "service.h"
+#include "streaming.h"
 
 #include "epggrab.h"
 
@@ -91,6 +93,9 @@ dvb_fe_monitor(void *aux)
   int status, v, update = 0, vv, i, fec, q;
   th_dvb_mux_instance_t *tdmi = tda->tda_mux_current;
   char buf[50];
+  signal_status_t sigstat;
+  streaming_message_t sm;
+  struct service *t;
 
   gtimer_arm(&tda->tda_fe_monitor_timer, dvb_fe_monitor, tda, 1);
 
@@ -194,6 +199,22 @@ dvb_fe_monitor(void *aux)
 
     dvb_mux_save(tdmi);
   }
+
+  /* Streaming message */
+  sigstat.status_text = dvb_mux_status(tdmi);
+  sigstat.snr         = tdmi->tdmi_snr;
+  sigstat.signal      = tdmi->tdmi_signal;
+  sigstat.ber         = tdmi->tdmi_ber;
+  sigstat.unc         = tdmi->tdmi_uncorrected_blocks;
+  sm.sm_type = SMT_SIGNAL_STATUS;
+  sm.sm_data = &sigstat;
+  LIST_FOREACH(t, &tda->tda_transports, s_active_link)
+    if(t->s_dvb_mux_instance == tda->tda_mux_current && t->s_status == SERVICE_RUNNING ) {
+      pthread_mutex_lock(&t->s_stream_mutex);
+      streaming_pad_deliver(&t->s_streaming_pad, &sm);
+      pthread_mutex_unlock(&t->s_stream_mutex);
+    }
+
 }
 
 
@@ -201,7 +222,7 @@ dvb_fe_monitor(void *aux)
  * Stop the given TDMI
  */
 void
-dvb_fe_stop(th_dvb_mux_instance_t *tdmi)
+dvb_fe_stop(th_dvb_mux_instance_t *tdmi, int retune)
 {
   th_dvb_adapter_t *tda = tdmi->tdmi_adapter;
 
@@ -233,8 +254,13 @@ dvb_fe_stop(th_dvb_mux_instance_t *tdmi)
   }
   
   epggrab_mux_stop(tdmi, 0);
-
+  
   time(&tdmi->tdmi_lost_adapter);
+
+  if (!retune) {
+    gtimer_disarm(&tda->tda_fe_monitor_timer);
+    dvb_adapter_stop(tda);
+  }
 }
 
 
@@ -439,41 +465,54 @@ dvb_fe_tune(th_dvb_mux_instance_t *tdmi, const char *reason)
   }
 
   if(tda->tda_mux_current != NULL)
-    dvb_fe_stop(tda->tda_mux_current);
-
-    
+    dvb_fe_stop(tda->tda_mux_current, 1);
+  else
+    dvb_adapter_start(tda);
+      
   if(tda->tda_type == FE_QPSK) {
 	
     /* DVB-S */
     dvb_satconf_t *sc;
-    int port, lowfreq, hifreq, switchfreq, hiband, pol;
+    int port, lowfreq, hifreq, switchfreq, hiband, pol, dbsbs;
 
     lowfreq = 9750000;
     hifreq = 10600000;
     switchfreq = 11700000;
     port = 0;
+    dbsbs = 0;
 
     if((sc = tdmi->tdmi_conf.dmc_satconf) != NULL) {
       port = sc->sc_port;
 
       if(sc->sc_lnb != NULL)
       	dvb_lnb_get_frequencies(sc->sc_lnb, &lowfreq, &hifreq, &switchfreq);
+      if(!strcmp(sc->sc_id ?: "", "DBS Bandstacked"))
+        dbsbs = 1;
     }
 
-    hiband = switchfreq && p->frequency > switchfreq;
-
-    pol = tdmi->tdmi_conf.dmc_polarisation;
+    if(dbsbs) {
+      hiband = 0;
+      if(tdmi->tdmi_conf.dmc_polarisation == POLARISATION_HORIZONTAL ||
+         tdmi->tdmi_conf.dmc_polarisation == POLARISATION_CIRCULAR_LEFT)
+        p->frequency = abs(p->frequency - hifreq);
+      else
+        p->frequency = abs(p->frequency - lowfreq);
+      pol = POLARISATION_CIRCULAR_LEFT;
+    } else {
+      hiband = switchfreq && p->frequency > switchfreq;
+      pol = tdmi->tdmi_conf.dmc_polarisation;
+      if(hiband)
+        p->frequency = abs(p->frequency - hifreq);
+      else
+        p->frequency = abs(p->frequency - lowfreq);
+    }
+ 
     if ((r = diseqc_setup(tda->tda_fe_fd,
 		 port,
 		 pol == POLARISATION_HORIZONTAL ||
 		 pol == POLARISATION_CIRCULAR_LEFT,
 		 hiband, tda->tda_diseqc_version)) != 0)
       tvhlog(LOG_ERR, "dvb", "diseqc setup failed %d\n", r);
-      
-    if(hiband)
-      p->frequency = abs(p->frequency - hifreq);
-    else
-      p->frequency = abs(p->frequency - lowfreq);
   }
 
   dvb_mux_nicename(buf, sizeof(buf), tdmi);

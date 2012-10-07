@@ -43,6 +43,9 @@ extern pthread_mutex_t global_lock;
 extern pthread_mutex_t ffmpeg_lock;
 extern pthread_mutex_t fork_lock;
 
+extern int webui_port;
+extern int htsp_port;
+
 typedef struct source_info {
   char *si_device;
   char *si_adapter;
@@ -233,6 +236,13 @@ typedef enum {
   SMT_SERVICE_STATUS,
 
   /**
+   * Signal status
+   *
+   * Notification about frontend signal status
+   */
+  SMT_SIGNAL_STATUS,
+
+  /**
    * Streaming stop.
    *
    * End of streaming. If sm_code is 0 this was a result to an
@@ -382,12 +392,16 @@ extern int log_debug;
 } while(0)
 
 
+#ifndef CLOCK_MONOTONIC_COARSE
+#define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC
+#endif
+
 static inline int64_t 
 getmonoclock(void)
 {
   struct timespec tp;
 
-  clock_gettime(CLOCK_MONOTONIC, &tp);
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &tp);
 
   return tp.tv_sec * 1000000ULL + (tp.tv_nsec / 1000);
 }

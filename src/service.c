@@ -1,6 +1,6 @@
 /*
  *  Services
- *  Copyright (C) 2010 Andreas Öman
+ *  Copyright (C) 2010 Andreas Ã–man
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -47,6 +47,7 @@
 #include "atomic.h"
 #include "dvb/dvb.h"
 #include "htsp.h"
+#include "lang_codes.h"
 
 #define SERVICE_HASH_WIDTH 101
 
@@ -336,15 +337,6 @@ service_find(channel_t *ch, unsigned int weight, const char *loginfo,
       continue;
     }
 
-    if(t->s_quality_index(t) < 10) {
-      if(loginfo != NULL) {
-	tvhlog(LOG_NOTICE, "Service", 
-	       "%s: Skipping \"%s\" -- Quality below 10%%",
-	       loginfo, service_nicename(t));
-	err = SM_CODE_BAD_SIGNAL;
-      }
-      continue;
-    }
     vec[cnt++] = t;
     tvhlog(LOG_DEBUG, "Service",
     		"%s: Adding adapter \"%s\" for service \"%s\"",
@@ -372,11 +364,19 @@ service_find(channel_t *ch, unsigned int weight, const char *loginfo,
   /* First, try all services without stealing */
   for(i = off; i < cnt; i++) {
     t = vec[i];
-    tvhlog(LOG_DEBUG, "Service", "%s: Probing adapter \"%s\" without stealing for service \"%s\"",
-	     loginfo, service_adapter_nicename(t), service_nicename(t));
-
     if(t->s_status == SERVICE_RUNNING) 
       return t;
+    if(t->s_quality_index(t) < 10) {
+      if(loginfo != NULL) {
+         tvhlog(LOG_NOTICE, "Service",
+	       "%s: Skipping \"%s\" -- Quality below 10%%",
+	       loginfo, service_nicename(t));
+         err = SM_CODE_BAD_SIGNAL;
+      }
+      continue;
+    }
+    tvhlog(LOG_DEBUG, "Service", "%s: Probing adapter \"%s\" without stealing for service \"%s\"",
+	     loginfo, service_adapter_nicename(t), service_nicename(t));
     if((r = service_start(t, 0, 0)) == 0)
       return t;
     if(loginfo != NULL)
@@ -750,6 +750,13 @@ static struct strtab stypetab[] = {
   { "SDTV",         ST_SDTV },
   { "Radio",        ST_RADIO },
   { "HDTV",         ST_HDTV },
+  { "HDTV",         ST_EX_HDTV },
+  { "SDTV",         ST_EX_SDTV },
+  { "HDTV",         ST_EP_HDTV },
+  { "HDTV",         ST_ET_HDTV },
+  { "SDTV",         ST_DN_SDTV },
+  { "HDTV",         ST_DN_HDTV },
+  { "SDTV",         ST_SK_SDTV },
   { "SDTV-AC",      ST_AC_SDTV },
   { "HDTV-AC",      ST_AC_HDTV },
 };
@@ -769,6 +776,13 @@ service_is_tv(service_t *t)
   return 
     t->s_servicetype == ST_SDTV    ||
     t->s_servicetype == ST_HDTV    ||
+    t->s_servicetype == ST_EX_HDTV ||
+    t->s_servicetype == ST_EX_SDTV ||
+    t->s_servicetype == ST_EP_HDTV ||
+    t->s_servicetype == ST_ET_HDTV ||
+    t->s_servicetype == ST_DN_SDTV ||
+    t->s_servicetype == ST_DN_HDTV ||
+    t->s_servicetype == ST_SK_SDTV ||
     t->s_servicetype == ST_AC_SDTV ||
     t->s_servicetype == ST_AC_HDTV;
 }
@@ -1147,6 +1161,7 @@ service_is_primary_epg(service_t *svc)
   service_t *ret = NULL, *t;
   if (!svc || !svc->s_ch) return 0;
   LIST_FOREACH(t, &svc->s_ch->ch_services, s_ch_link) {
+    if (!t->s_dvb_mux_instance) continue;
     if (!t->s_enabled || !t->s_dvb_eit_enable) continue;
     if (!ret || dvb_extra_prio(t->s_dvb_mux_instance->tdmi_adapter) > dvb_extra_prio(ret->s_dvb_mux_instance->tdmi_adapter))
       ret = t;

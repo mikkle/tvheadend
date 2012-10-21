@@ -226,6 +226,19 @@ muxer_init(muxer_t *m, const struct streaming_start *ss, const char *name)
 
 
 /**
+ * sanity wrapper arround m_reconfigure()
+ */
+int
+muxer_reconfigure(muxer_t *m, const struct streaming_start *ss)
+{
+  if(!m || !ss)
+    return -1;
+
+  return m->m_reconfigure(m, ss);
+}
+
+
+/**
  * sanity wrapper arround m_open_file()
  */
 int
@@ -295,12 +308,12 @@ muxer_write_meta(muxer_t *m, struct epg_broadcast *eb)
  * sanity wrapper arround m_write_pkt()
  */
 int
-muxer_write_pkt(muxer_t *m, struct th_pkt *pkt)
+muxer_write_pkt(muxer_t *m, void *data)
 {
-  if(!m || !pkt)
+  if(!m || !data)
     return -1;
 
-  return m->m_write_pkt(m, pkt);
+  return m->m_write_pkt(m, data);
 }
 
 

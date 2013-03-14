@@ -9,7 +9,7 @@
 # Setup
 # ###########################################################################
 
-ROOTDIR=$(dirname $0)
+ROOTDIR=$(cd "$(dirname "$0")"; pwd)
 
 #
 # Options
@@ -34,7 +34,7 @@ OPTIONS=(
 # Begin
 #
 
-. $ROOTDIR/support/configure.inc
+. "$ROOTDIR/support/configure.inc"
 parse_args $*
 
 # ###########################################################################
@@ -53,6 +53,11 @@ check_cc_option sse2
 
 check_cc_snippet getloadavg '#include <stdlib.h> 
 void test() { getloadavg(NULL,0); }'
+
+check_cc_snippet atomic64 '#include <stdint.h>
+uint64_t test(uint64_t *ptr){
+return __sync_fetch_and_add(ptr, 1);
+}'
 
 #
 # Python
@@ -175,16 +180,10 @@ fi
 #
 if enabled linuxdvb && enabled dvbscan; then
   printf "${TAB}" "fetching dvb-scan files ..."
-  if [ -d ${ROOTDIR}/data/dvb-scan/.git ]; then
-    (cd ${ROOTDIR}/data/dvb-scan; git pull) &> /dev/null
-  else
-    rm -rf ${ROOTDIR}/data/dvb-scan &> /dev/null
-    URL=git://linuxtv.org/dtv-scan-tables.git
-    git clone $URL ${ROOTDIR}/data/dvb-scan &> /dev/null
-    if [ $? -ne 0 ]; then
-      echo "fail"
-      die "Failed to fetch dvb-scan data (use --disable-dvbscan)"
-    fi
+  "${ROOTDIR}/support/getmuxlist"
+  if [ $? -ne 0 ]; then
+    echo "fail"
+    die "Failed to fetch dvb-scan data (use --disable-dvbscan)"
   fi
   echo "ok"
 fi
@@ -195,7 +194,7 @@ fi
 
 # Write config
 write_config
-cat >> ${CONFIG_H} <<EOF
+cat >> "${CONFIG_H}" <<EOF
 #define TVHEADEND_DATADIR "$(eval echo ${datadir})/tvheadend"
 EOF
 

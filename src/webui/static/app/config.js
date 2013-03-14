@@ -39,7 +39,9 @@ tvheadend.miscconf = function() {
 		root : 'config'
 	}, [ 'muxconfpath', 'language',
        'imagecache_enabled', 'imagecache_ok_period',
-       'imagecache_fail_period']);
+       'imagecache_fail_period', 'imagecache_ignore_sslcert',
+       'tvhtime_update_enabled', 'tvhtime_ntp_enabled',
+       'tvhtime_tolerance']);
 
 	/* ****************************************************************
 	 * Form Fields
@@ -76,6 +78,32 @@ tvheadend.miscconf = function() {
 	});
 
   /*
+   * Time/Date
+   */
+  var tvhtimeUpdateEnabled = new Ext.form.Checkbox({
+    name: 'tvhtime_update_enabled',
+    fieldLabel: 'Update time'
+  });
+  
+  var tvhtimeNtpEnabled = new Ext.form.Checkbox({
+    name: 'tvhtime_ntp_enabled',
+    fieldLabel: 'Enable NTP driver'
+  });
+
+  var tvhtimeTolerance = new Ext.form.NumberField({
+    name: 'tvhtime_tolerance',
+    fieldLabel: 'Update tolerance (ms)'
+  });
+
+  var tvhtimePanel = new Ext.form.FieldSet({
+    title: 'Time Update',
+    width: 700,
+    autoHeight: true,
+    collapsible: true,
+    items : [ tvhtimeUpdateEnabled, tvhtimeNtpEnabled, tvhtimeTolerance ]
+  });
+
+  /*
    * Image cache
    */
   var imagecacheEnabled = new Ext.form.Checkbox({
@@ -93,12 +121,18 @@ tvheadend.miscconf = function() {
     fieldLabel: 'Re-try period (hours)',
   });
 
+  var imagecacheIgnoreSSLCert = new Ext.form.Checkbox({
+    name: 'imagecache_ignore_sslcert',
+    fieldLabel: 'Ignore invalid SSL certificate'
+  });
+
   var imagecachePanel = new Ext.form.FieldSet({
     title: 'Image Caching',
     width: 700,
     autoHeight: true,
     collapsible: true,
-    items : [ imagecacheEnabled, imagecacheOkPeriod, imagecacheFailPeriod ]
+    items : [ imagecacheEnabled, imagecacheOkPeriod, imagecacheFailPeriod,
+              imagecacheIgnoreSSLCert ]
   });
   if (tvheadend.capabilities.indexOf('imagecache') == -1)
     imagecachePanel.hide();
@@ -134,7 +168,7 @@ tvheadend.miscconf = function() {
 		defaultType : 'textfield',
 		autoHeight : true,
 		items : [ language, dvbscanPath,
-              imagecachePanel ],
+              imagecachePanel, tvhtimePanel ],
 		tbar : [ saveButton, '->', helpButton ]
 	});
 

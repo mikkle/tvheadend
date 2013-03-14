@@ -1,4 +1,4 @@
-Tvheadend (TV streaming server) v3.5
+Tvheadend (TV streaming server)
 ====================================
 (c) 2006 - 2013 Andreas Öman, et al.
 

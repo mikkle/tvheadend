@@ -114,6 +114,8 @@ typedef struct dvr_entry {
   channel_t *de_channel;
   LIST_ENTRY(dvr_entry) de_channel_link;
 
+  char *de_channel_name;
+
   gtimer_t de_timer;
 
   /**
@@ -134,6 +136,8 @@ typedef struct dvr_entry {
   lang_str_t *de_title;      /* Title in UTF-8 (from EPG) */
   lang_str_t *de_desc;       /* Description in UTF-8 (from EPG) */
   epg_genre_t de_content_type; /* Content type (from EPG) */
+
+  uint16_t de_dvb_eid;
 
   dvr_prio_t de_pri;
 
@@ -198,6 +202,7 @@ typedef struct dvr_entry {
 
 } dvr_entry_t;
 
+#define DVR_CH_NAME(e) ((e)->de_channel == NULL ? (e)->de_channel_name : (e)-> de_channel->ch_name)
 
 /**
  * Autorec entry

@@ -63,6 +63,7 @@ static inline htsmsg_t *tvheadend_capabilities_list(int check)
 extern pthread_mutex_t global_lock;
 extern pthread_mutex_t ffmpeg_lock;
 extern pthread_mutex_t fork_lock;
+extern pthread_mutex_t atomic_lock;
 
 extern int tvheadend_webui_port;
 extern int tvheadend_webui_debug;
@@ -184,7 +185,6 @@ typedef enum {
   SCT_TELETEXT,
   SCT_DVBSUB,
   SCT_CA,
-  SCT_PAT,
   SCT_PMT,
   SCT_AAC,
   SCT_MPEGTS,
@@ -220,7 +220,8 @@ typedef struct streaming_skip
     SMT_SKIP_REL_TIME,
     SMT_SKIP_ABS_TIME,
     SMT_SKIP_REL_SIZE,
-    SMT_SKIP_ABS_SIZE
+    SMT_SKIP_ABS_SIZE,
+    SMT_SKIP_LIVE
   } type;
   union {
     off_t   size;
@@ -560,6 +561,8 @@ char *md5sum ( const char *str );
 int makedirs ( const char *path, int mode );
 
 int rmtree ( const char *path );
+
+char *regexp_escape ( const char *str );
 
 /* printing */
 #if __SIZEOF_LONG__ == 8

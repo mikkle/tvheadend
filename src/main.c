@@ -139,6 +139,7 @@ time_t dispatch_clock;
 pthread_mutex_t global_lock;
 pthread_mutex_t ffmpeg_lock;
 pthread_mutex_t fork_lock;
+pthread_mutex_t atomic_lock;
 
 /*
  * Locals
@@ -149,6 +150,8 @@ static int log_decorate;
 static LIST_HEAD(, gtimer) gtimers;
 static int log_debug_to_syslog;
 static int log_debug_to_console;
+static int log_debug_to_path;
+static char* log_path;
 
 static void
 handle_sigpipe(int x)
@@ -254,8 +257,7 @@ show_usage
 {
   int i;
   char buf[256];
-  printf("Usage :- %s [options]\n\n", argv0);
-  printf("Options\n");
+  printf("Usage: %s [OPTIONS]\n", argv0);
   for (i = 0; i < num; i++) {
 
     /* Section */
@@ -268,14 +270,14 @@ show_usage
       char sopt[4];
       char *desc, *tok;
       if (opts[i].sopt)
-        snprintf(sopt, sizeof(sopt), "-%c/", opts[i].sopt);
+        snprintf(sopt, sizeof(sopt), "-%c,", opts[i].sopt);
       else
-        sopt[0] = 0;
-      snprintf(buf, sizeof(buf), "  %s--%s", sopt, opts[i].lopt);
+        strcpy(sopt, "   ");
+      snprintf(buf, sizeof(buf), "  %s --%s", sopt, opts[i].lopt);
       desc = strdup(opts[i].desc);
       tok  = strtok(desc, "\n");
       while (tok) {
-        printf("%s\t\t%s\n", buf, tok);
+        printf("%-30s%s\n", buf, tok);
         tok = buf;
         while (*tok) {
           *tok = ' ';
@@ -283,11 +285,12 @@ show_usage
         }
         tok = strtok(NULL, "\n");
       }
+      free(desc);
     }
   }
   printf("\n");
-  printf("For more information read the man page or visit\n");
-  printf(" http://www.lonelycoder.com/hts/\n");
+  printf("For more information please visit the Tvheadend website:\n");
+  printf("  http://www.lonelycoder.com/tvheadend/\n");
   printf("\n");
   exit(0);
 }
@@ -346,6 +349,8 @@ main(int argc, char **argv)
   log_decorate              = isatty(2);
   log_debug_to_syslog       = 0;
   log_debug_to_console      = 0;
+  log_debug_to_path         = 0;
+  log_path                  = NULL;
   tvheadend_webui_port      = 9981;
   tvheadend_webroot         = NULL;
   tvheadend_htsp_port       = 9982;
@@ -360,6 +365,7 @@ main(int argc, char **argv)
               opt_syslog       = 0,
               opt_uidebug      = 0,
               opt_abort        = 0,
+              opt_noacl        = 0,
               opt_ipv6         = 0;
   const char *opt_config       = NULL,
              *opt_user         = NULL,
@@ -370,6 +376,7 @@ main(int argc, char **argv)
              *opt_dvb_raw      = NULL,
 #endif
              *opt_rawts        = NULL,
+             *opt_bindaddr     = NULL,
              *opt_subscribe    = NULL;
   cmdline_opt_t cmdline_opts[] = {
     {   0, NULL,        "Generic Options",         OPT_BOOL, NULL         },
@@ -382,18 +389,19 @@ main(int argc, char **argv)
     { 'u', "user",      "Run as user",             OPT_STR,  &opt_user    },
     { 'g', "group",     "Run as group",            OPT_STR,  &opt_group   },
     { 'p', "pid",       "Alternate pid path",      OPT_STR,  &opt_pidpath },
-    { 'C', "firstrun",  "If no useraccount exist then create one with\n"
+    { 'C', "firstrun",  "If no user account exists then create one with\n"
 	                      "no username and no password. Use with care as\n"
 	                      "it will allow world-wide administrative access\n"
 	                      "to your Tvheadend installation until you edit\n"
 	                      "the access-control from within the Tvheadend UI",
       OPT_BOOL, &opt_firstrun },
 #if ENABLE_LINUXDVB
-    { 'a', "adapters",  "Use only specified DVB adapters",
+    { 'a', "adapters",  "Only use specified DVB adapters (comma separated)",
       OPT_STR, &opt_dvb_adapters },
 #endif
     {   0, NULL,         "Server Connectivity",    OPT_BOOL, NULL         },
     { '6', "ipv6",       "Listen on IPv6",         OPT_BOOL, &opt_ipv6    },
+    { 'b', "bindaddr",   "Specify bind address",   OPT_STR,  &opt_bindaddr},
     {   0, "http_port",  "Specify alternative http port",
       OPT_INT, &tvheadend_webui_port },
     {   0, "http_root",  "Specify alternative http webroot",
@@ -407,7 +415,10 @@ main(int argc, char **argv)
     { 'd', "debug",     "Enable all debug",        OPT_BOOL, &opt_debug   },
     { 's', "syslog",    "Enable debug to syslog",  OPT_BOOL, &opt_syslog  },
     {   0, "uidebug",   "Enable webUI debug",      OPT_BOOL, &opt_uidebug },
+    { 'l', "log",       "Log to file",             OPT_STR,  &log_path    },
     { 'A', "abort",     "Immediately abort",       OPT_BOOL, &opt_abort   },
+    {   0, "noacl",     "Disable all access control checks",
+      OPT_BOOL, &opt_noacl },
 #if ENABLE_LINUXDVB
     { 'R', "dvbraw",    "Use rawts file to create virtual adapter",
       OPT_STR, &opt_dvb_raw },
@@ -423,6 +434,7 @@ main(int argc, char **argv)
 
   /* Set locale */
   setlocale(LC_ALL, "");
+  setlocale(LC_NUMERIC, "C");
 
   /* make sure the timezone is set */
   tzset();
@@ -458,18 +470,23 @@ main(int argc, char **argv)
   /* Additional cmdline processing */
   log_debug_to_console  = opt_debug;
   log_debug_to_syslog   = opt_syslog;
+  log_debug_to_path     = opt_debug;
   tvheadend_webui_debug = opt_debug || opt_uidebug;
+  tvhlog(LOG_INFO, "START", "initialising");
 #if ENABLE_LINUXDVB
   if (!opt_dvb_adapters) {
     adapter_mask = ~0;
   } else {
-    char *p, *r, *e;
+    char *p, *e;
+    char *r = NULL;
+    char *dvb_adapters = strdup(opt_dvb_adapters);
     adapter_mask = 0x0;
-    p = strtok_r((char*)opt_dvb_adapters, ",", &r);
+    p = strtok_r(dvb_adapters, ",", &r);
     while (p) {
       int a = strtol(p, &e, 10);
       if (*e != 0 || a < 0 || a > 31) {
         tvhlog(LOG_ERR, "START", "Invalid adapter number '%s'", p);
+        free(dvb_adapters);
         return 1;
       }
       adapter_mask |= (1 << a);
@@ -477,8 +494,10 @@ main(int argc, char **argv)
     }
     if (!adapter_mask) {
       tvhlog(LOG_ERR, "START", "No adapters specified!");
+      free(dvb_adapters);
       return 1;
     }
+    free(dvb_adapters);
   }
 #endif
   if (tvheadend_webroot) {
@@ -503,7 +522,7 @@ main(int argc, char **argv)
     gid_t gid;
     uid_t uid;
     struct group  *grp = getgrnam(opt_group ?: "video");
-    struct passwd *pw  = getpwnam(opt_user) ?: NULL;
+    struct passwd *pw  = opt_user ? getpwnam(opt_user) : NULL;
     FILE   *pidfile    = fopen(opt_pidpath, "w+");
 
     if(grp != NULL) {
@@ -563,6 +582,7 @@ main(int argc, char **argv)
   pthread_mutex_init(&ffmpeg_lock, NULL);
   pthread_mutex_init(&fork_lock, NULL);
   pthread_mutex_init(&global_lock, NULL);
+  pthread_mutex_init(&atomic_lock, NULL);
   pthread_mutex_lock(&global_lock);
 
   time(&dispatch_clock);
@@ -590,7 +610,7 @@ main(int argc, char **argv)
 
   subscription_init();
 
-  access_init(opt_firstrun);
+  access_init(opt_firstrun, opt_noacl);
 
 #if ENABLE_LINUXDVB
   muxes_init();
@@ -608,7 +628,7 @@ main(int argc, char **argv)
 #endif
 
   tcp_server_init(opt_ipv6);
-  http_server_init();
+  http_server_init(opt_bindaddr);
   webui_init();
 
   serviceprobe_init();
@@ -626,7 +646,7 @@ main(int argc, char **argv)
 
   dvr_init();
 
-  htsp_init();
+  htsp_init(opt_bindaddr);
 
   if(opt_rawts != NULL)
     rawts_init(opt_rawts);
@@ -666,11 +686,15 @@ main(int argc, char **argv)
 
   mainloop();
 
-  epg_save();
+  // Note: the locking is obviously a bit redundant, but without
+  //       we need to disable the gtimer_arm call in epg_save()
+  pthread_mutex_lock(&global_lock);
+  epg_save(NULL);
 
 #if ENABLE_TIMESHIFT
   timeshift_term();
 #endif
+  pthread_mutex_unlock(&global_lock);
 
   tvhlog(LOG_NOTICE, "STOP", "Exiting HTS Tvheadend");
 
@@ -706,6 +730,7 @@ tvhlogv(int notify, int severity, const char *subsys, const char *fmt,
   int l;
   struct tm tm;
   time_t now;
+  static int log_path_fail = 0;
 
   l = snprintf(buf, sizeof(buf), "%s: ", subsys);
 
@@ -750,7 +775,24 @@ tvhlogv(int notify, int severity, const char *subsys, const char *fmt,
     } else {
       sgroff = "\033[0m";
     }
-    fprintf(stderr, "%s%s [%s]:%s%s\n", sgr, t, leveltxt, buf, sgroff);
+    fprintf(stderr, "%s%s [%7s]:%s%s\n", sgr, t, leveltxt, buf, sgroff);
+  }
+
+  /**
+   * Write to file
+   */
+  if (log_path && (log_debug_to_path || severity < LOG_DEBUG)) {
+    const char *leveltxt = logtxtmeta[severity][0];
+    FILE *fp = fopen(log_path, "a");
+    if (fp) {
+      log_path_fail = 0;
+      fprintf(fp, "%s [%7s]:%s\n", t, leveltxt, buf);
+      fclose(fp);
+    } else {
+      if (!log_path_fail)
+        syslog(LOG_WARNING, "failed to write log file %s", log_path);
+      log_path_fail = 1;
+    }
   }
 }
 

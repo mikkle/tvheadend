@@ -120,6 +120,9 @@ tvheadend.dvb_muxes = function(adapterData, satConfStore) {
 
 	tvheadend.comet.on('dvbMux', function(m) {
 
+		if(m.adapterId !== adapterId)
+			return;
+
 		r = store.getById(m.id)
 		if (typeof r === 'undefined') {
 			store.reload();
@@ -789,6 +792,36 @@ tvheadend.addMuxManually = function(adapterData, satConfStore) {
 	var items = [];
 
 	switch (adapterData.deliverySystem) {
+		case 'ATSC':
+			items.push(new Ext.form.NumberField({
+				fieldLabel : 'Frequency (kHz)',
+				name : 'frequency',
+				allowNegative : false,
+				allowBlank : false,
+				minValue : adapterData.freqMin,
+				maxValue : adapterData.freqMax
+			}));
+
+			items.push(new Ext.form.ComboBox({
+				fieldLabel : 'Modulation',
+				name : 'constellation',
+				hiddenName : 'constellationID',
+				editable : false,
+				allowBlank : false,
+				displayField : 'title',
+				valueField : 'id',
+				mode : 'remote',
+				triggerAction : 'all',
+				store : new Ext.data.JsonStore({
+					root : 'entries',
+					fields : [ 'title', 'id' ],
+					url : 'dvb/feopts/constellations/' + adId
+				})
+			}));
+
+                break;
+
+
 		case 'DVB-T':
 
 			items.push(new Ext.form.NumberField({
@@ -1162,7 +1195,7 @@ tvheadend.dvb_adapter_general = function(adapterData, satConfStore) {
 	}, [ 'name', 'enabled', 'automux', 'skip_initialscan', 'idlescan', 'diseqcversion',
 		'diseqcrepeats', 'qmon', 'skip_checksubscr', 
 		'poweroff', 'sidtochan', 'nitoid', 'extrapriority',
-		,'disable_pmt_monitor', 'full_mux_rx', 'idleclose' ]);
+		,'disable_pmt_monitor', 'full_mux_rx', 'idleclose', 'grace_period' ]);
 
 	function saveConfForm() {
 		confform.getForm().submit({
@@ -1224,6 +1257,10 @@ tvheadend.dvb_adapter_general = function(adapterData, satConfStore) {
                         triggerAction : 'all',
                         fields: [ 'num', 'str' ],
                         store : [ [0, 'Auto'], [1, 'Off'], [2, 'On'] ]
+		}),
+		new Ext.form.NumberField({
+			fieldLabel: 'Grace Period',
+			name: 'grace_period'
 		}),
 		new Ext.form.Checkbox({
 			fieldLabel : 'Disable PMT monitoring',

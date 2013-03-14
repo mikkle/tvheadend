@@ -75,7 +75,13 @@
 #define CW_DUMP(buf, len, format, ...) \
   printf(format, __VA_ARGS__); int j; for (j = 0; j < len; ++j) printf("%02X ", buf[j]); printf("\n");
 
+#ifdef __GNUC__
+#include <features.h>
+#if __GNUC_PREREQ(4, 3)
 #pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+#endif
+
 #define MAX_CA  4
 #define MAX_INDEX 64
 #define KEY_SIZE  8
@@ -262,6 +268,14 @@ capmt_send_msg(capmt_t *capmt, int sid, const uint8_t *buf, size_t len)
     } else {
       capmt->sids[i] = sid;
       tvhlog(LOG_DEBUG, "capmt", "%s: added: i=%d", __FUNCTION__, i);
+    }
+
+    // check if the socket is still alive by writing 0 bytes
+    if (capmt->capmt_sock[i] > 0) {
+      if (write(capmt->capmt_sock[i], NULL, 0) < 0)
+        capmt->capmt_sock[i] = 0;
+      else if (found)
+        return 0;
     }
 
     // opening socket and sending
@@ -533,7 +547,7 @@ handle_ca0(capmt_t* capmt) {
 #endif
 
       if(ct->ct_keystate != CT_RESOLVED)
-        tvhlog(LOG_INFO, "capmt", "Obtained key for service \"%s\"",t->s_svcname);
+        tvhlog(LOG_DEBUG, "capmt", "Obtained key for service \"%s\"",t->s_svcname);
 
       ct->ct_keystate = CT_RESOLVED;
     }
@@ -663,7 +677,6 @@ capmt_table_input(struct th_descrambler *td, struct service *t,
   capmt_t *capmt = ct->ct_capmt;
   int adapter_num = t->s_dvb_mux_instance->tdmi_adapter->tda_adapter_num;
   int total_caids = 0, current_caid = 0;
-  int i;
 
   caid_t *c;
 
@@ -838,23 +851,13 @@ capmt_table_input(struct th_descrambler *td, struct service *t,
           cce->cce_ecmsize = len;
 
           if(ct->ct_keystate != CT_RESOLVED)
-            tvhlog(LOG_INFO, "capmt",
+            tvhlog(LOG_DEBUG, "capmt",
               "Trying to obtain key for service \"%s\"",t->s_svcname);
 
           buf[9] = pmtversion;
           pmtversion = (pmtversion + 1) & 0x1F;
 
-          int found = 0;
-          if (capmt->capmt_oscam) {
-            for (i = 0; i < MAX_SOCKETS; i++) {
-              if (capmt->sids[i] == sid) {
-                found = 1;
-                break;
-              }
-            }
-          }
-          if ((capmt->capmt_oscam && !found) || !capmt->capmt_oscam)
-            capmt_send_msg(capmt, sid, buf, pos);
+          capmt_send_msg(capmt, sid, buf, pos);
           break;
         }
       default:
@@ -1013,6 +1016,10 @@ capmt_service_start(service_t *t)
   TAILQ_FOREACH(capmt, &capmts, capmt_link) {
     /* skip, if we're not active */
     if (!capmt->capmt_enabled)
+      continue;
+
+
+    if (!(t->s_dvb_mux_instance && t->s_dvb_mux_instance->tdmi_adapter))
       continue;
 
     tvhlog(LOG_INFO, "capmt",

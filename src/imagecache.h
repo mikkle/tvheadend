@@ -24,6 +24,7 @@
 extern uint32_t imagecache_enabled;
 extern uint32_t imagecache_ok_period;
 extern uint32_t imagecache_fail_period;
+extern uint32_t imagecache_ignore_sslcert;
 
 extern pthread_mutex_t imagecache_mutex;
 
@@ -37,6 +38,8 @@ int      imagecache_set_ok_period   ( uint32_t e )
   __attribute__((warn_unused_result));
 int      imagecache_set_fail_period ( uint32_t e )
   __attribute__((warn_unused_result));
+int      imagecache_set_ignore_sslcert ( uint32_t e )
+  __attribute__((warn_unused_result));
 
 // Note: will return 0 if invalid (must serve original URL)
 uint32_t imagecache_get_id  ( const char *url );
@@ -49,6 +52,7 @@ int      imagecache_open    ( uint32_t id );
     uint32_t _id = imagecache_get_id(_url);\
     if (_id) {\
       snprintf(_tmp, sizeof(_tmp), _fmt, _id);\
+      htsmsg_add_str(_msg, _fld, _tmp);\
     } else {\
       htsmsg_add_str(_msg, _fld, _url);\
     }\

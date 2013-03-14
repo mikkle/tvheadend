@@ -31,6 +31,7 @@
 #include "timeshift/private.h"
 #include "config2.h"
 #include "settings.h"
+#include "atomic.h"
 
 static int                   timeshift_reaper_run;
 static timeshift_file_list_t timeshift_reaper_list;
@@ -38,8 +39,7 @@ static pthread_t             timeshift_reaper_thread;
 static pthread_mutex_t       timeshift_reaper_lock;
 static pthread_cond_t        timeshift_reaper_cond;
 
-pthread_mutex_t              timeshift_size_lock;
-size_t                       timeshift_total_size;
+uint64_t                     timeshift_total_size;
 
 /* **************************************************************************
  * File reaper thread
@@ -75,10 +75,6 @@ static void* timeshift_reaper_callback ( void *p )
       if (errno != ENOTEMPTY)
         tvhlog(LOG_ERR, "timeshift", "failed to remove %s [e=%s]",
                dpath, strerror(errno));
-    pthread_mutex_lock(&timeshift_size_lock);
-    assert(tsf->size <= timeshift_total_size);
-    timeshift_total_size -= tsf->size;
-    pthread_mutex_unlock(&timeshift_size_lock);
 
     /* Free memory */
     while ((ti = TAILQ_FIRST(&tsf->iframes))) {
@@ -151,9 +147,7 @@ void timeshift_filemgr_close ( timeshift_file_t *tsf )
   if (r > 0)
   {
     tsf->size += r;
-    pthread_mutex_lock(&timeshift_size_lock);
-    timeshift_total_size += r;
-    pthread_mutex_unlock(&timeshift_size_lock);
+    atomic_add_u64(&timeshift_total_size, r);
   }
   close(tsf->fd);
   tsf->fd = -1;
@@ -167,7 +161,9 @@ void timeshift_filemgr_remove
 {
   if (tsf->fd != -1)
     close(tsf->fd);
+  tvhlog(LOG_DEBUG, "timeshift", "ts %d remove %s", ts->id, tsf->path);
   TAILQ_REMOVE(&ts->files, tsf, link);
+  atomic_add_u64(&timeshift_total_size, -tsf->size);
   timeshift_reaper_remove(tsf);
 }
 
@@ -197,7 +193,7 @@ timeshift_file_t *timeshift_filemgr_get ( timeshift_t *ts, int create )
 
   /* Return last file */
   if (!create)
-    return TAILQ_LAST(&ts->files, timeshift_file_list);
+    return timeshift_filemgr_newest(ts);
 
   /* No space */
   if (ts->full)
@@ -220,26 +216,41 @@ timeshift_file_t *timeshift_filemgr_get ( timeshift_t *ts, int create )
       if (d > (ts->max_time+5)) {
         if (!tsf_hd->refcount) {
           timeshift_filemgr_remove(ts, tsf_hd, 0);
+          tsf_hd = NULL;
         } else {
-#ifdef TSHFT_TRACE
           tvhlog(LOG_DEBUG, "timeshift", "ts %d buffer full", ts->id);
-#endif
           ts->full = 1;
         }
       }
     }
 
     /* Check size */
-    pthread_mutex_lock(&timeshift_size_lock);
-    if (!timeshift_unlimited_size && timeshift_total_size >= timeshift_max_size) {
-      tvhlog(LOG_DEBUG, "timshift", "ts %d buffer full", ts->id);
-      ts->full = 1;
+    if (!timeshift_unlimited_size &&
+        atomic_pre_add_u64(&timeshift_total_size, 0) >= timeshift_max_size) {
+
+      /* Remove the last file (if we can) */
+      if (tsf_hd && !tsf_hd->refcount) {
+        timeshift_filemgr_remove(ts, tsf_hd, 0);
+
+      /* Full */
+      } else {
+        tvhlog(LOG_DEBUG, "timeshift", "ts %d buffer full", ts->id);
+        ts->full = 1;
+      }
     }
-    pthread_mutex_unlock(&timeshift_size_lock);
       
     /* Create new file */
     tsf_tmp = NULL;
     if (!ts->full) {
+
+      /* Create directories */
+      if (!ts->path) {
+        if (timeshift_filemgr_makedirs(ts->id, path, sizeof(path)))
+          return NULL;
+        ts->path = strdup(path);
+      }
+
+      /* Create File */
       snprintf(path, sizeof(path), "%s/tvh-%"PRItime_t, ts->path, time);
 #ifdef TSHFT_TRACE
       tvhlog(LOG_DEBUG, "timeshift", "ts %d create file %s", ts->id, path);
@@ -270,6 +281,8 @@ timeshift_file_t *timeshift_filemgr_get ( timeshift_t *ts, int create )
     tsf_tl = tsf_tmp;
   }
 
+  if (tsf_tl)
+    tsf_tl->refcount++;
   return tsf_tl;
 }
 
@@ -300,11 +313,24 @@ timeshift_file_t *timeshift_filemgr_prev
 /*
  * Get the oldest file
  */
-timeshift_file_t *timeshift_filemgr_last ( timeshift_t *ts )
+timeshift_file_t *timeshift_filemgr_oldest ( timeshift_t *ts )
 {
-  return TAILQ_FIRST(&ts->files);
+  timeshift_file_t *tsf = TAILQ_FIRST(&ts->files);
+  if (tsf)
+    tsf->refcount++;
+  return tsf;
 }
 
+/*
+ * Get the newest file
+ */
+timeshift_file_t *timeshift_filemgr_newest ( timeshift_t *ts )
+{
+  timeshift_file_t *tsf = TAILQ_LAST(&ts->files, timeshift_file_list);
+  if (tsf)
+    tsf->refcount++;
+  return tsf;
+}
 
 /* **************************************************************************
  * Setup / Teardown
@@ -323,7 +349,6 @@ void timeshift_filemgr_init ( void )
 
   /* Size processing */
   timeshift_total_size = 0;
-  pthread_mutex_init(&timeshift_size_lock, NULL);
 
   /* Start the reaper thread */
   timeshift_reaper_run = 1;

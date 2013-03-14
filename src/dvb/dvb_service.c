@@ -135,6 +135,17 @@ dvb_service_refresh(service_t *t)
   tda->tda_open_service(tda, t);
 }
 
+/**
+ *
+ */
+static int
+dvb_service_is_enabled(service_t *t)
+{
+  th_dvb_mux_instance_t *tdmi = t->s_dvb_mux_instance;
+  th_dvb_adapter_t *tda = tdmi->tdmi_adapter;
+  return tda->tda_enabled && tdmi->tdmi_enabled && t->s_enabled && t->s_pmt_pid;
+}
+
 
 /**
  *
@@ -339,6 +350,8 @@ dvb_service_setsourceinfo(service_t *t, struct source_info *si)
 static int
 dvb_grace_period(service_t *t)
 {
+  if (t->s_dvb_mux_instance && t->s_dvb_mux_instance->tdmi_adapter)
+    return t->s_dvb_mux_instance->tdmi_adapter->tda_grace_period ?: 10;
   return 10;
 }
 
@@ -403,12 +416,18 @@ dvb_service_find2(th_dvb_mux_instance_t *tdmi, uint16_t sid, int pmt_pid,
 
   LIST_FOREACH(t, &tdmi->tdmi_transports, s_group_link) {
     if(t->s_dvb_service_id == sid)
-      return t;
+      break;
+  }
+
+  /* Existing - updated PMT_PID if required */
+  if (t) {
+    if (pmt_pid && pmt_pid != t->s_pmt_pid) {
+      t->s_pmt_pid = pmt_pid;
+      *save = 1;
+    }
+    return t;
   }
   
-  if(pmt_pid == 0)
-    return NULL;
-
   if(identifier == NULL) {
     snprintf(tmp, sizeof(tmp), "%s_%04x", tdmi->tdmi_identifier, sid);
     identifier = tmp;
@@ -430,6 +449,7 @@ dvb_service_find2(th_dvb_mux_instance_t *tdmi, uint16_t sid, int pmt_pid,
   t->s_setsourceinfo = dvb_service_setsourceinfo;
   t->s_quality_index = dvb_service_quality;
   t->s_grace_period  = dvb_grace_period;
+  t->s_is_enabled    = dvb_service_is_enabled;
 
   t->s_dvb_mux_instance = tdmi;
   LIST_INSERT_HEAD(&tdmi->tdmi_transports, t, s_group_link);

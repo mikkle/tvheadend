@@ -47,12 +47,22 @@
 #include "service.h"
 #include "epggrab.h"
 #include "diseqc.h"
+#include "atomic.h"
 
 struct th_dvb_adapter_queue dvb_adapters;
 struct th_dvb_mux_instance_tree dvb_muxes;
 static void *dvb_adapter_input_dvr(void *aux);
 static void tda_init(th_dvb_adapter_t *tda);
 
+/**
+ * Adapters that are known to have SNR support
+ */
+static const char* dvb_adapter_snr_whitelist[] = {
+  "Sony CXD2820R",
+  "stv090x",
+  "TurboSight",
+  NULL
+};
 
 /**
  *
@@ -106,6 +116,7 @@ tda_save(th_dvb_adapter_t *tda)
   htsmsg_add_u32(m, "skip_initialscan", tda->tda_skip_initialscan);
   htsmsg_add_u32(m, "disable_pmt_monitor", tda->tda_disable_pmt_monitor);
   htsmsg_add_s32(m, "full_mux_rx", tda->tda_full_mux_rx);
+  htsmsg_add_u32(m, "grace_period", tda->tda_grace_period);
   hts_settings_save(m, "dvbadapters/%s", tda->tda_identifier);
   htsmsg_destroy(m);
 }
@@ -424,6 +435,22 @@ dvb_adapter_set_full_mux_rx(th_dvb_adapter_t *tda, int on)
   tda_save(tda);
 }
 
+/**
+ *
+ */
+void
+dvb_adapter_set_grace_period(th_dvb_adapter_t *tda, uint32_t p)
+{
+  if (tda->tda_grace_period == p)
+    return;
+
+  tvhlog(LOG_NOTICE, "dvb",
+         "Adapter \"%s\" set grace period to %d", tda->tda_displayname, p);
+
+  tda->tda_grace_period = p;
+  tda_save(tda);
+}
+
 
 /**
  *
@@ -486,12 +513,14 @@ tda_add(int adapter_num)
   th_dvb_adapter_t *tda;
   struct dvb_frontend_info fe_info;
   DIR *dirp;
+  const char **str;
 
   /* Check valid adapter */
   snprintf(path, sizeof(path), "/dev/dvb/adapter%d", adapter_num);
   dirp = opendir(path);
   if (!dirp)
     return;
+  closedir(dirp);
 
   /* Check each frontend */
   // Note: this algo will fail if there are really exotic variations
@@ -574,8 +603,14 @@ tda_add(int adapter_num)
     dvb_adapter_checkspeed(tda);
 
     /* Adapters known to provide valid SNR */
-    if(strcasestr(fe_info.name, "Sony CXD2820R"))
-      tda->tda_snr_valid = 1;
+    str = dvb_adapter_snr_whitelist;
+    while (*str) {
+      if (strcasestr(fe_info.name, *str)) {
+        tda->tda_snr_valid = 1;
+        break;
+      }
+      str++;
+    }
 
     /* Store */
     tvhlog(LOG_INFO, "dvb",
@@ -681,6 +716,22 @@ dvb_adapter_start ( th_dvb_adapter_t *tda )
 }
 
 void
+dvb_adapter_stop_dvr ( th_dvb_adapter_t *tda )
+{
+  /* Stop DVR thread */
+  if (tda->tda_dvr_pipe.rd != -1) {
+    tvhlog(LOG_DEBUG, "dvb", "%s stopping thread", tda->tda_rootpath);
+    int err = tvh_write(tda->tda_dvr_pipe.wr, "", 1);
+    assert(!err);
+    pthread_join(tda->tda_dvr_thread, NULL);
+    close(tda->tda_dvr_pipe.rd);
+    close(tda->tda_dvr_pipe.wr);
+    tda->tda_dvr_pipe.rd = -1;
+    tvhlog(LOG_DEBUG, "dvb", "%s stopped thread", tda->tda_rootpath);
+  }
+}
+
+void
 dvb_adapter_stop ( th_dvb_adapter_t *tda )
 {
   /* Poweroff */
@@ -696,18 +747,8 @@ dvb_adapter_stop ( th_dvb_adapter_t *tda )
     tda->tda_fe_fd = -1;
   }
 
-  /* Stop DVR thread */
-  if (tda->tda_dvr_pipe.rd != -1) {
-    tvhlog(LOG_DEBUG, "dvb", "%s stopping thread", tda->tda_rootpath);
-    int err = tvh_write(tda->tda_dvr_pipe.wr, "", 1);
-    assert(!err);
-    pthread_join(tda->tda_dvr_thread, NULL);
-    close(tda->tda_dvr_pipe.rd);
-    close(tda->tda_dvr_pipe.wr);
-    tda->tda_dvr_pipe.rd = -1;
-    tvhlog(LOG_DEBUG, "dvb", "%s stopped thread", tda->tda_rootpath);
-  }
-
+  dvb_adapter_stop_dvr(tda);
+  
   dvb_adapter_notify(tda);
 }
 
@@ -776,6 +817,8 @@ dvb_adapter_init(uint32_t adapter_mask, const char *rawfile)
       htsmsg_get_u32(c, "extrapriority",       &tda->tda_extrapriority);
       htsmsg_get_u32(c, "skip_initialscan",    &tda->tda_skip_initialscan);
       htsmsg_get_u32(c, "disable_pmt_monitor", &tda->tda_disable_pmt_monitor);
+      if (htsmsg_get_u32(c, "grace_period",        &tda->tda_grace_period))
+        tda->tda_grace_period = 10;
       if (htsmsg_get_s32(c, "full_mux_rx", &tda->tda_full_mux_rx))
         if (!htsmsg_get_u32(c, "disable_full_mux_rx", &u32) && u32)
           tda->tda_full_mux_rx = 0;
@@ -1022,6 +1065,7 @@ dvb_adapter_input_dvr(void *aux)
       }
     }
     r += c;
+    atomic_add(&tda->tda_bytes, c);
 
     /* not enough data */
     if (r < 188) continue;

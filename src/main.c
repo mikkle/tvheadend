@@ -64,6 +64,7 @@
 #include "timeshift.h"
 #if ENABLE_LIBAV
 #include "libav.h"
+#include "plumbing/transcoding.h"
 #endif
 
 /* Command line option struct */
@@ -125,6 +126,9 @@ const tvh_caps_t tvheadend_capabilities[] = {
 #endif
 #if ENABLE_LINUXDVB
   { "linuxdvb", NULL },
+#endif
+#if ENABLE_LIBAV
+  { "transcoding", &transcoding_enabled },
 #endif
 #if ENABLE_IMAGECACHE
   { "imagecache", &imagecache_enabled },
@@ -319,7 +323,7 @@ show_usage
   }
   printf("\n");
   printf("For more information please visit the Tvheadend website:\n");
-  printf("  http://www.lonelycoder.com/tvheadend/\n");
+  printf("  https://tvheadend.org\n");
   printf("\n");
   exit(0);
 }

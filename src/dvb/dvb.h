@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include "htsmsg.h"
 #include "psi.h"
+#include "tvhpoll.h"
 
 struct service;
 struct th_dvb_table;
@@ -204,7 +205,7 @@ typedef struct th_dvb_adapter {
 
   th_dvb_mux_instance_t *tda_mux_epg;
 
-  int tda_table_epollfd;
+  tvhpoll_t *tda_table_pd;
 
   uint32_t tda_enabled;
 
@@ -435,7 +436,7 @@ th_dvb_mux_instance_t *dvb_mux_create(th_dvb_adapter_t *tda,
 				      uint16_t onid, uint16_t tsid, const char *network,
 				      const char *logprefix, int enabled,
 				      int initialscan, const char *identifier,
-				      dvb_satconf_t *satconf, int create);
+				      dvb_satconf_t *satconf, int create, th_dvb_mux_instance_t *src);
 
 void dvb_mux_set_networkname(th_dvb_mux_instance_t *tdmi, const char *name);
 

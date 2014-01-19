@@ -20,6 +20,7 @@
 
 #include "config.h"
 
+#define _GNU_SOURCE
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -27,6 +28,12 @@
 #include <netinet/in.h>
 #include <sys/time.h>
 #include <libgen.h>
+#include <string.h>
+#include <assert.h>
+#include <unistd.h>
+#if ENABLE_LOCKOWNER
+#include <sys/syscall.h>
+#endif
 
 #include "queue.h"
 #include "avg.h"
@@ -40,6 +47,7 @@ typedef struct {
   const char     *name;
   const uint32_t *enabled;
 } tvh_caps_t;
+extern int              tvheadend_running;
 extern const char      *tvheadend_version;
 extern const char      *tvheadend_cwd;
 extern const char      *tvheadend_webroot;
@@ -80,14 +88,19 @@ typedef struct source_info {
   int   si_type;
 } source_info_t;
 
+
 static inline void
 lock_assert0(pthread_mutex_t *l, const char *file, int line)
 {
+#if ENABLE_LOCKOWNER
+  assert(l->__data.__owner == syscall(SYS_gettid));
+#else
   if(pthread_mutex_trylock(l) == EBUSY)
     return;
 
   fprintf(stderr, "Mutex not held at %s:%d\n", file, line);
   abort();
+#endif
 }
 
 #define lock_assert(l) lock_assert0(l, __FILE__, __LINE__)
@@ -136,9 +149,6 @@ void gtimer_disarm(gtimer_t *gti);
  * List / Queue header declarations
  */
 LIST_HEAD(th_subscription_list, th_subscription);
-RB_HEAD(channel_tree, channel);
-TAILQ_HEAD(channel_queue, channel);
-LIST_HEAD(channel_list, channel);
 LIST_HEAD(dvr_config_list, dvr_config);
 LIST_HEAD(dvr_entry_list, dvr_entry);
 TAILQ_HEAD(ref_update_queue, ref_update);
@@ -193,18 +203,22 @@ typedef enum {
   SCT_TELETEXT,
   SCT_DVBSUB,
   SCT_CA,
-  SCT_PMT,
   SCT_AAC,
   SCT_MPEGTS,
   SCT_TEXTSUB,
   SCT_EAC3,
   SCT_MP4A,
+  SCT_VP8,
+  SCT_VORBIS,
 } streaming_component_type_t;
 
-#define SCT_ISVIDEO(t) ((t) == SCT_MPEG2VIDEO || (t) == SCT_H264)
+#define SCT_ISVIDEO(t) ((t) == SCT_MPEG2VIDEO || (t) == SCT_H264 ||	\
+			(t) == SCT_VP8)
+
 #define SCT_ISAUDIO(t) ((t) == SCT_MPEG2AUDIO || (t) == SCT_AC3 || \
-                        (t) == SCT_AAC || (t) == SCT_MP4A ||	   \
-			(t) == SCT_EAC3)
+                        (t) == SCT_AAC  || (t) == SCT_MP4A ||	   \
+			(t) == SCT_EAC3 || (t) == SCT_VORBIS)
+
 #define SCT_ISSUBTITLE(t) ((t) == SCT_TEXTSUB || (t) == SCT_DVBSUB)
 
 /**
@@ -350,7 +364,7 @@ typedef enum {
 #define SM_CODE_SOURCE_DELETED            102
 #define SM_CODE_SUBSCRIPTION_OVERRIDDEN   103
 
-#define SM_CODE_NO_HW_ATTACHED            200
+#define SM_CODE_NO_FREE_ADAPTER           200
 #define SM_CODE_MUX_NOT_ENABLED           201
 #define SM_CODE_NOT_FREE                  202
 #define SM_CODE_TUNING_FAILED             203
@@ -358,12 +372,36 @@ typedef enum {
 #define SM_CODE_BAD_SIGNAL                205
 #define SM_CODE_NO_SOURCE                 206
 #define SM_CODE_NO_SERVICE                207
+#define SM_CODE_NO_VALID_ADAPTER          308
 
 #define SM_CODE_ABORTED                   300
 
 #define SM_CODE_NO_DESCRAMBLER            400
 #define SM_CODE_NO_ACCESS                 401
 #define SM_CODE_NO_INPUT                  402
+
+typedef enum
+{
+  SIGNAL_UNKNOWN,
+  SIGNAL_GOOD,
+  SIGNAL_BAD,
+  SIGNAL_FAINT,
+  SIGNAL_NONE
+} signal_state_t;
+
+static struct strtab signal_statetab[] = {
+  { "GOOD",       SIGNAL_GOOD    },
+  { "BAD",        SIGNAL_BAD     },
+  { "FAINT",      SIGNAL_BAD     },
+  { "NONE",       SIGNAL_BAD     },
+};
+
+static inline const char * signal2str ( signal_state_t st )
+{
+  const char *r = val2str(st, signal_statetab);
+  if (!r) r = "UNKNOWN";
+  return r;
+}
 
 /**
  * Streaming messages are sent from the pad to its receivers
@@ -426,6 +464,8 @@ typedef struct sbuf {
 
 streaming_component_type_t streaming_component_txt2type(const char *str);
 const char *streaming_component_type2txt(streaming_component_type_t s);
+streaming_component_type_t streaming_component_txt2type(const char *s);
+const char *streaming_component_audio_type2desc(int audio_type);
 
 static inline unsigned int tvh_strhash(const char *s, unsigned int mod)
 {
@@ -462,7 +502,6 @@ int rate_to_sri(int rate);
 
 extern time_t dispatch_clock;
 extern struct service_list all_transports;
-extern struct channel_tree channel_name_tree;
 
 extern void scopedunlock(pthread_mutex_t **mtxp);
 
@@ -494,17 +533,32 @@ typedef struct th_pipe
   int wr;
 } th_pipe_t;
 
+static inline void mystrset(char **p, const char *s)
+{
+  free(*p);
+  *p = s ? strdup(s) : NULL;
+}
+
+int tvhthread_create0
+  (pthread_t *thread, const pthread_attr_t *attr,
+   void *(*start_routine) (void *), void *arg,
+   const char *name, int detach);
+
+#define tvhthread_create(a, b, c, d, e)  tvhthread_create0(a, b, c, d, #c, e)
+
 int tvh_open(const char *pathname, int flags, mode_t mode);
 
 int tvh_socket(int domain, int type, int protocol);
 
 int tvh_pipe(int flags, th_pipe_t *pipe);
 
+void tvh_pipe_close(th_pipe_t *pipe);
+
 int tvh_write(int fd, const void *buf, size_t len);
 
 void hexdump(const char *pfx, const uint8_t *data, int len);
 
-uint32_t tvh_crc32(uint8_t *data, size_t datalen, uint32_t crc);
+uint32_t tvh_crc32(const uint8_t *data, size_t datalen, uint32_t crc);
 
 int base64_decode(uint8_t *out, const char *in, int out_size);
 
@@ -548,6 +602,15 @@ int makedirs ( const char *path, int mode );
 int rmtree ( const char *path );
 
 char *regexp_escape ( const char *str );
+
+#ifdef PLATFORM_LINUX
+/* glibc wrapper */
+#if !__GLIBC_PREREQ(2,8)
+void
+qsort_r(void *base, size_t nmemb, size_t size,
+       int (*cmp)(const void *, const void *, void *), void *aux);
+#endif
+#endif /* PLATFORM_LINUX */
 
 /* printing */
 # if __WORDSIZE == 64
